@@ -2,8 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Magical AI Memory Tree</title>
-    <!-- Dependencies -->
+    <title>Magic AI Christmas Tree</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.11.0/gsap.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -11,191 +10,44 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: 'Segoe UI', sans-serif; }
-        #ui { position: absolute; top: 30px; left: 30px; color: gold; z-index: 10; pointer-events: none; }
-        #controls { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; gap: 10px; }
-        .glass-btn { background: rgba(255, 215, 0, 0.1); border: 1px solid gold; color: gold; padding: 12px 24px; border-radius: 50px; cursor: pointer; pointer-events: all; backdrop-filter: blur(10px); font-weight: bold; transition: 0.3s; border: 1px solid gold; }
-        .glass-btn:hover { background: rgba(255, 215, 0, 0.4); transform: scale(1.05); }
-        #v-preview { position: absolute; top: 10px; right: 10px; width: 160px; border: 2px solid gold; border-radius: 15px; z-index: 5; transform: scaleX(-1); background: #222; }
+        #ui-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 100; }
+        #status-bar { position: absolute; top: 20px; left: 20px; color: gold; font-size: 1.2rem; text-shadow: 0 0 10px gold; }
+        #controls { position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); display: flex; gap: 15px; pointer-events: all; }
+        .magic-btn { background: rgba(255, 215, 0, 0.15); border: 2px solid gold; color: gold; padding: 15px 30px; border-radius: 50px; cursor: pointer; backdrop-filter: blur(15px); font-weight: bold; transition: 0.3s; }
+        .magic-btn:hover { background: gold; color: black; box-shadow: 0 0 20px gold; }
+        #v-preview { position: absolute; top: 10px; right: 10px; width: 180px; border: 2px solid gold; border-radius: 20px; transform: scaleX(-1); background: #111; }
+        #startup-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: radial-gradient(circle, #222, #000); display: flex; flex-direction: column; justify-content: center; align-items: center; color: gold; z-index: 9999; }
         input[type="file"] { display: none; }
-        
-        /* Loader and Permission Overlay */
-        #loader { 
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-            background: radial-gradient(circle, #1a1a1a, #000); 
-            display: flex; flex-direction: column; justify-content: center; align-items: center; 
-            color: gold; z-index: 1000; text-align: center;
-        }
-        #unlock-btn { margin-top: 20px; padding: 15px 40px; font-size: 1.2rem; background: gold; color: black; border: none; border-radius: 10px; cursor: pointer; font-weight: bold; }
-        .warning { color: #ff4444; font-size: 0.9rem; margin-top: 20px; max-width: 300px; }
     </style>
 </head>
 <body>
 
-<div id="loader">
-    <h2 id="load-text">✨ The Tree is Waiting...</h2>
-    <p id="load-subtext">Click below to grant camera access and start the magic.</p>
-    <button id="unlock-btn">Unlock Magic 🔓</button>
-    <div id="secure-warn" class="warning" style="display:none;">
-        ⚠️ <b>Error:</b> Camera access requires HTTPS. Please upload this to GitHub Pages, Netlify, or Vercel to see it work.
+<div id="startup-screen">
+    <h1>🎄 Magical Memory Tree</h1>
+    <button class="magic-btn" id="start-magic" style="font-size: 1.5rem;">CLICK TO START MAGIC</button>
+    <p style="margin-top: 20px; opacity: 0.7;">Requires Camera & HTTPS for Gestures</p>
+</div>
+
+<div id="ui-overlay">
+    <div id="status-bar">✨ Tree is Resting...</div>
+    <video id="v-preview" autoplay playsinline></video>
+    <div id="controls">
+        <label class="magic-btn" for="photo-in">📸 ADD PHOTO</label>
+        <input type="file" id="photo-in" multiple accept="image/*">
+        <label class="magic-btn" for="music-in">🎵 SET MUSIC</label>
+        <input type="file" id="music-in" accept="audio/*">
     </div>
-    <div id="error-log" class="warning"></div>
-</div>
-
-<div id="ui">
-    <h1>🎄 The Eternal Memory Tree</h1>
-    <p id="status">Ready</p>
-</div>
-
-<video id="v-preview" autoplay playsinline></video>
-
-<div id="controls" style="display:none;">
-    <label class="glass-btn" for="photo-in">📸 Add Photo</label>
-    <input type="file" id="photo-in" multiple accept="image/*">
-    <label class="glass-btn" for="music-in">🎵 Set Music</label>
-    <input type="file" id="music-in" accept="audio/*">
 </div>
 
 <audio id="player" loop crossorigin="anonymous"></audio>
 
 <script>
-/** 1. DATABASE & SECURITY CHECK **/
-const SUB_URL = "https://fghbnkjpuoqonnqrtxlm.supabase.co"; 
-const SUB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZnaGJua2pwdW9xb25ucXJ0eGxtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY1OTc1ODgsImV4cCI6MjA4MjE3MzU4OH0.LkPfFC19GKdQcP2IaZyrymxhF2bNzCwcw-yrjMKqOIw";
-
+/** 1. SUPABASE CONNECTION (Add your keys here) **/
+const SB_URL = "https://fghbnkjpuoqonnqrtxlm.supabase.co"; 
+const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZnaGJua2pwdW9xb25ucXJ0eGxtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY1OTc1ODgsImV4cCI6MjA4MjE3MzU4OH0.LkPfFC19GKdQcP2IaZyrymxhF2bNzCwcw-yrjMKqOIw";
 let db = null;
-if (SUB_URL !== "https://fghbnkjpuoqonnqrtxlm.supabase.co") {
-    db = supabase.createClient(SUB_URL, SUB_KEY);
-}
+if (SB_URL !== "https://fghbnkjpuoqonnqrtxlm.supabase.co") db = supabase.createClient(SB_URL, SB_KEY);
 
-// Check for HTTPS
-if (window.location.protocol === 'file:') {
-    document.getElementById('secure-warn').style.display = 'block';
-}
-
-/** 2. THREE.JS SCENE **/
+/** 2. FANCY 3D SCENE (GLITTER TREE) **/
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(window.devicePixelRatio);
-document.body.appendChild(renderer.domElement);
-
-// Particle Tree Logic
-const pCount = 12000;
-const pGeo = new THREE.BufferGeometry();
-const pos = new Float32Array(pCount * 3);
-const colors = new Float32Array(pCount * 3);
-const orig = new Float32Array(pCount * 3);
-
-for (let i = 0; i < pCount; i++) {
-    const ratio = i / pCount;
-    const spiral = i * 0.12;
-    const radius = (1 - ratio) * (4 + Math.sin(i * 0.02) * 0.5);
-    const x = Math.cos(spiral) * radius;
-    const y = ratio * 12 - 6;
-    const z = Math.sin(spiral) * radius;
-    pos[i*3] = orig[i*3] = x;
-    pos[i*3+1] = orig[i*3+1] = y;
-    pos[i*3+2] = orig[i*3+2] = z;
-    const r = Math.random();
-    if (r > 0.95) { colors[i*3]=1; colors[i*3+1]=0.85; colors[i*3+2]=0.1; }
-    else { colors[i*3]=0; colors[i*3+1]=0.4 + Math.random()*0.3; colors[i*3+2]=0.1; }
-}
-pGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-pGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-const pMat = new THREE.PointsMaterial({ size: 0.045, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending });
-const tree = new THREE.Points(pGeo, pMat);
-scene.add(tree);
-
-const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.7, 0), new THREE.MeshBasicMaterial({ color: 0xffdd44 }));
-star.position.y = 6.2;
-scene.add(star);
-camera.position.z = 18;
-
-const frameGroup = new THREE.Group();
-scene.add(frameGroup);
-
-/** 3. CAMERA & AI INITIALIZATION **/
-const videoElement = document.getElementById('v-preview');
-const hands = new Hands({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
-hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5 });
-
-const cam = new Camera(videoElement, {
-    onFrame: async () => { await hands.send({image: videoElement}); },
-    width: 640, height: 480
-});
-
-// START BUTTON CLICK HANDLER
-document.getElementById('unlock-btn').onclick = async function() {
-    this.innerText = "Starting Camera...";
-    try {
-        await cam.start();
-        document.getElementById('loader').style.opacity = '0';
-        setTimeout(() => document.getElementById('loader').style.display = 'none', 1000);
-        document.getElementById('controls').style.display = 'flex';
-        initSync();
-    } catch (err) {
-        document.getElementById('error-log').innerHTML = "<b>Camera Failed:</b> " + err.message + "<br>Check if another app is using the camera.";
-        this.innerText = "Retry Unlock";
-    }
-};
-
-/** 4. AI GESTURES & SYNC **/
-let isExploded = false;
-let lastX = 0;
-
-hands.onResults((results) => {
-    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-        const h = results.multiHandLandmarks[0];
-        const dist = Math.hypot(h[8].x - h[0].x, h[8].y - h[0].y);
-        
-        if (dist < 0.25 && isExploded) toggleTree(false);
-        else if (dist > 0.6 && !isExploded) toggleTree(true);
-
-        const dx = (h[0].x - lastX);
-        frameGroup.rotation.y -= dx * 6;
-        lastX = h[0].x;
-    }
-});
-
-function toggleTree(explode) {
-    isExploded = explode;
-    const p = tree.geometry.attributes.position.array;
-    for (let i = 0; i < pCount; i++) {
-        gsap.to(p, {
-            [i*3]: explode ? (Math.random()-0.5)*50 : orig[i*3],
-            [i*3+1]: explode ? (Math.random()-0.5)*50 : orig[i*3+1],
-            [i*3+2]: explode ? (Math.random()-0.5)*50 : orig[i*3+2],
-            duration: 1.5,
-            onUpdate: () => tree.geometry.attributes.position.needsUpdate = true
-        });
-    }
-}
-
-async function initSync() {
-    if (db) {
-        const { data } = await db.from('memories').select('*');
-        if (data) data.forEach(item => (item.type === 'image') ? createFrame(item.url) : (document.getElementById('player').src = item.url));
-    }
-}
-
-function createFrame(url) {
-    const tex = new THREE.TextureLoader().load(url);
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 2.8), new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }));
-    const angle = Math.random() * Math.PI * 2;
-    mesh.position.set(Math.cos(angle)*10, (Math.random()-0.5)*10, Math.sin(angle)*10);
-    mesh.lookAt(0,0,0);
-    frameGroup.add(mesh);
-}
-
-/** 5. RENDER LOOP **/
-function animate() {
-    requestAnimationFrame(animate);
-    tree.rotation.y += 0.003;
-    star.rotation.y += 0.05;
-    renderer.render(scene, camera);
-}
-animate();
-</script>
-</body>
-</html>
+con
