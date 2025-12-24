@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>The Eternal Magic Tree</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.11.0/gsap.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; font-family: 'Segoe UI', sans-serif; }
+        #ui { position: absolute; top: 30px; left: 30px; color: gold; z-index: 10; pointer-events: none; }
+        #controls { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; gap: 10px; }
+        .glass-btn { background: rgba(255, 215, 0, 0.1); border: 1px solid gold; color: gold; padding: 12px 20px; border-radius: 5px; cursor: pointer; pointer-events: all; backdrop-filter: blur(10px); }
+        #v-preview { position: absolute; top: 10px; right: 10px; width: 140px; border: 1px solid gold; border-radius: 10px; z-index: 5; }
+        input[type="file"] { display: none; }
+        #loader { 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background: radial-gradient(circle, #111, #000); 
+            display: flex; flex-direction: column; justify-content: center; align-items: center; 
+            color: gold; z-index: 1000; transition: opacity 1s;
+        }
+        .error-msg { color: #ff4444; font-size: 12px; margin-top: 10px; text-align: center; max-width: 80%; }
+    </style>
+</head>
+<body>
+
+<div id="loader">
+    <h2 id="load-text">✨ Preparing the Magic...</h2>
+    <p id="load-subtext">Checking camera and connection</p>
+    <div id="error-log" class="error-msg"></div>
+</div>
+
+<div id="ui">
+    <h1>🎄 Magical AI Tree</h1>
+    <p id="status">Syncing...</p>
+</div>
+
+<video id="v-preview" autoplay playsinline></video>
+
+<div id="controls">
+    <label class="glass-btn" for="photo-in">📸 Add Photo</label>
+    <input type="file" id="photo-in" multiple accept="image/*">
+    <label class="glass-btn" for="music-in">🎵 Set Music</label>
+    <input type="file" id="music-in" accept="audio/*">
+</div>
+
+<audio id="player" loop crossorigin="anonymous"></audio>
+
+<script>
+/** 1. CONFIGURATION **/
+// Replace these with your actual Supabase keys to enable saving!
+const SUB_URL = "https://fghbnkjpuoqonnqrtxlm.supabase.co"; 
+const SUB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZnaGJua2pwdW9xb25ucXJ0eGxtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY1OTc1ODgsImV4cCI6MjA4MjE3MzU4OH0.LkPfFC19GKdQcP2IaZyrymxhF2bNzCwcw-yrjMKqOIw";
+
+let supabase = null;
+if (SUB_URL !== "https://fghbnkjpuoqonnqrtxlm.supabase.co") {
+    supabase = supabase.createClient(SUB_URL, SUB_KEY);
+} else {
+    console.warn("Supabase keys not found. Persistence disabled.");
+    document
