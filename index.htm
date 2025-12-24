@@ -221,4 +221,19 @@ function animate() {
     requestAnimationFrame(animate);
     if (!isDragging) {
         treeGroup.rotation.y += 0.001; // Slow idle drift
-        frameGroup.rotation.y +=
+        frameGroup.rotation.y += 0.001;
+    }
+    star.rotation.y += 0.05;
+    star.scale.setScalar(1 + Math.sin(Date.now()*0.005)*0.1);
+    renderer.render(scene, camera);
+}
+animate();
+
+window.onresize = () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+};
+</script>
+</body>
+</html>
