@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>The Eternal Magic Tree</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.11.0/gsap.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; font-family: 'Segoe UI', sans-serif; }
+        #ui { position: absolute; top: 30px; left: 30px; color: gold; z-index: 10; pointer-events: none; }
+        #controls { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; gap: 10px; }
+        .glass-btn { background: rgba(255, 215, 0, 0.1); border: 1px solid gold; color: gold; padding: 12px 20px; border-radius: 5px; cursor: pointer; pointer-events: all; backdrop-filter: blur(10px); }
+        #v-preview { position: absolute; top: 10px; right: 10px; width: 140px; border: 1px solid gold; border-radius: 10px; z-index: 5; }
+        input[type="file"] { display: none; }
+        #loader { 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background: radial-gradient(circle, #111, #000); 
+            display: flex; flex-direction: column; justify-content: center; align-items: center; 
+            color: gold; z-index: 1000; transition: opacity 1s;
+        }
+        .error-msg { color: #ff4444; font-size: 12px; margin-top: 10px; text-align: center; max-width: 80%; }
+    </style>
+</head>
+<body>
+
+<div id="loader">
+    <h2 id="load-text">✨ Preparing the Magic...</h2>
+    <p id="load-subtext">Checking camera and connection</p>
+    <div id="error-log" class="error-msg"></div>
+</div>
+
+<div id="ui">
+    <h1>🎄 Magical AI Tree</h1>
+    <p id="status">Syncing...</p>
+</div>
+
+<video id="v-preview" autoplay playsinline></video>
+
+<div id="controls">
+    <label class="glass-btn" for="photo-in">📸 Add Photo</label>
+    <input type="file" id="photo-in" multiple accept="image/*">
+    <label class="glass-btn" for="music-in">🎵 Set Music</label>
+    <input type="file" id="music-in" accept="audio/*">
+</div>
+
+<audio id="player" loop crossorigin="anonymous"></audio>
+
+<script>
+/** 1. CONFIGURATION **/
+// Replace these with your actual Supabase keys to enable saving!
+const SUB_URL = "https://fghbnkjpuoqonnqrtxlm.supabase.co"; 
+const SUB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZnaGJua2pwdW9xb25ucXJ0eGxtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY1OTc1ODgsImV4cCI6MjA4MjE3MzU4OH0.LkPfFC19GKdQcP2IaZyrymxhF2bNzCwcw-yrjMKqOIw";
+
+let supabase = null;
+if (SUB_URL !== "https://fghbnkjpuoqonnqrtxlm.supabase.co") {
+    supabase = supabase.createClient(SUB_URL, SUB_KEY);
+} else {
+    console.warn("Supabase keys not found. Persistence disabled.");
+    document.getElementById('error-log').innerText = "Note: Database not connected. Uploads won't be saved permanently.";
+}
+
+/** 2. THREE.JS SCENE **/
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// Create Particle Tree
+const pCount = 10000;
+const pGeo = new THREE.BufferGeometry();
+const pos = new Float32Array(pCount * 3);
+const colors = new Float32Array(pCount * 3);
+const orig = new Float32Array(pCount * 3);
+
+for (let i = 0; i < pCount; i++) {
+    const ratio = i / pCount;
+    const spiral = i * 0.1;
+    const radius = (1 - ratio) * 4;
+    const x = Math.cos(spiral) * radius;
+    const y = ratio * 12 - 6;
+    const z = Math.sin(spiral) * radius;
+    pos[i*3] = orig[i*3] = x;
+    pos[i*3+1] = orig[i*3+1] = y;
+    pos[i*3+2] = orig[i*3+2] = z;
+    colors[i*3] = 0; colors[i*3+1] = Math.random() * 0.5 + 0.2; colors[i*3+2] = 0.1;
+}
+
+pGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+pGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+const pMat = new THREE.PointsMaterial({ size: 0.05, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending });
+const tree = new THREE.Points(pGeo, pMat);
+scene.add(tree);
+
+camera.position.z = 18;
+
+/** 3. PERSISTENCE & LOADING **/
+const frameGroup = new THREE.Group();
+scene.add(frameGroup);
+
+async function init() {
+    // Hide loader after 5 seconds regardless (Fail-safe)
+    setTimeout(hideLoader, 5000);
+
+    if (supabase) {
+        try {
+            const { data, error } = await supabase.from('memories').select('*');
+            if (data) {
+                data.forEach(item => {
+                    if (item.type === 'image') createFrame(item.url);
+                    if (item.type === 'audio') {
+                        document.getElementById('player').src = item.url;
+                        document.getElementById('player').play().catch(e => console.log("Auto-play blocked"));
+                    }
+                });
+            }
+        } catch (e) {
+            console.error("Supabase Error:", e);
+        }
+    }
+    hideLoader();
+}
+
+function hideLoader() {
+    const loader = document.getElementById('loader');
+    loader.style.opacity = '0';
+    setTimeout(() => loader.style.display = 'none', 1000);
+}
+
+function createFrame(url) {
+    const tex = new THREE.TextureLoader().load(url);
+    const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(2.5, 2.5),
+        new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide })
+    );
+    const angle = Math.random() * Math.PI * 2;
+    mesh.position.set(Math.cos(angle)*10, (Math.random()-0.5)*10, Math.sin(angle)*10);
+    mesh.lookAt(0,0,0);
+    frameGroup.add(mesh);
+}
+
+/** 4. UPLOADS **/
+async function uploadFile(file, type) {
+    if (!supabase) {
+        // If no supabase, just show locally
+        const localUrl = URL.createObjectURL(file);
+        if (type === 'image') createFrame(localUrl);
+        else document.getElementById('player').src = localUrl;
+        return;
+    }
+
+    document.getElementById('status').innerText = "Uploading...";
+    const name = `${Date.now()}_${file.name}`;
+    const { data } = await supabase.storage.from('xmas').upload(name, file);
+    
+    if (data) {
+        const { data: urlData } = supabase.storage.from('xmas').getPublicUrl(name);
+        await supabase.from('memories').insert([{ url: urlData.publicUrl, type: type }]);
+        if (type === 'image') createFrame(urlData.publicUrl);
+        else document.getElementById('player').src = urlData.publicUrl;
+        document.getElementById('status').innerText = "Saved!";
+    }
+}
+
+document.getElementById('photo-in').onchange = (e) => Array.from(e.target.files).forEach(f => uploadFile(f, 'image'));
+document.getElementById('music-in').onchange = (e) => uploadFile(e.target.files[0], 'audio');
+
+/** 5. GESTURES **/
+let isExploded = false;
+let lastX = 0;
+
+function onResults(results) {
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        const h = results.multiHandLandmarks[0];
+        const dist = Math.hypot(h[8].x - h[0].x, h[8].y - h[0].y);
+        
+        if (dist < 0.25 && isExploded) toggleTree(false);
+        else if (dist > 0.6 && !isExploded) toggleTree(true);
+
+        const dx = (h[0].x - lastX);
+        frameGroup.rotation.y -= dx * 5;
+        lastX = h[0].x;
+    }
+}
+
+function toggleTree(explode) {
+    isExploded = explode;
+    const p = tree.geometry.attributes.position.array;
+    for (let i = 0; i < pCount; i++) {
+        gsap.to(p, {
+            [i*3]: explode ? (Math.random()-0.5)*40 : orig[i*3],
+            [i*3+1]: explode ? (Math.random()-0.5)*40 : orig[i*3+1],
+            [i*3+2]: explode ? (Math.random()-0.5)*40 : orig[i*3+2],
+            duration: 1.5,
+            onUpdate: () => tree.geometry.attributes.position.needsUpdate = true
+        });
+    }
+}
+
+const hands = new Hands({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+hands.setOptions({ maxNumHands: 1, modelComplexity: 1 });
+hands.onResults(onResults);
+
+const cam = new Camera(document.getElementById('v-preview'), {
+    onFrame: async () => { await hands.send({image: document.getElementById('v-preview')}); }
+});
+cam.start().catch(err => {
+    document.getElementById('error-log').innerText = "Camera error: Please ensure you have allowed camera access.";
+});
+
+function animate() {
+    requestAnimationFrame(animate);
+    tree.rotation.y += 0.002;
+    renderer.render(scene, camera);
+}
+animate();
+init();
+</script>
+</body>
+</html>
