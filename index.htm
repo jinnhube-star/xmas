@@ -2,52 +2,164 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Magic AI Christmas Tree</title>
+    <title>AI Christmas Memory Tree</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.11.0/gsap.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; font-family: 'Segoe UI', sans-serif; }
-        #ui-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 100; }
-        #status-bar { position: absolute; top: 20px; left: 20px; color: gold; font-size: 1.2rem; text-shadow: 0 0 10px gold; }
-        #controls { position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); display: flex; gap: 15px; pointer-events: all; }
-        .magic-btn { background: rgba(255, 215, 0, 0.15); border: 2px solid gold; color: gold; padding: 15px 30px; border-radius: 50px; cursor: pointer; backdrop-filter: blur(15px); font-weight: bold; transition: 0.3s; }
-        .magic-btn:hover { background: gold; color: black; box-shadow: 0 0 20px gold; }
-        #v-preview { position: absolute; top: 10px; right: 10px; width: 180px; border: 2px solid gold; border-radius: 20px; transform: scaleX(-1); background: #111; }
-        #startup-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: radial-gradient(circle, #222, #000); display: flex; flex-direction: column; justify-content: center; align-items: center; color: gold; z-index: 9999; }
-        input[type="file"] { display: none; }
+        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
+        #ui { position: absolute; top: 20px; left: 20px; color: gold; z-index: 100; pointer-events: none; }
+        #controls { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; gap: 10px; pointer-events: all; }
+        .btn { background: rgba(255,215,0,0.2); border: 1px solid gold; color: gold; padding: 12px 20px; border-radius: 5px; cursor: pointer; backdrop-filter: blur(5px); }
+        #v-preview { position: absolute; top: 10px; right: 10px; width: 150px; border: 1px solid gold; border-radius: 10px; transform: scaleX(-1); }
+        #start-screen { position: fixed; inset: 0; background: #000; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 999; color: gold; }
     </style>
 </head>
 <body>
 
-<div id="startup-screen">
-    <h1>🎄 Magical Memory Tree</h1>
-    <button class="magic-btn" id="start-magic" style="font-size: 1.5rem;">CLICK TO START MAGIC</button>
-    <p style="margin-top: 20px; opacity: 0.7;">Requires Camera & HTTPS for Gestures</p>
+<div id="start-screen">
+    <h1>🎄 Memory Tree</h1>
+    <button class="btn" id="btn-start" style="font-size: 1.5rem;">START MAGIC</button>
 </div>
 
-<div id="ui-overlay">
-    <div id="status-bar">✨ Tree is Resting...</div>
-    <video id="v-preview" autoplay playsinline></video>
-    <div id="controls">
-        <label class="magic-btn" for="photo-in">📸 ADD PHOTO</label>
-        <input type="file" id="photo-in" multiple accept="image/*">
-        <label class="magic-btn" for="music-in">🎵 SET MUSIC</label>
-        <input type="file" id="music-in" accept="audio/*">
-    </div>
+<div id="ui">
+    <h2 id="msg">Ready...</h2>
+</div>
+
+<video id="v-preview" autoplay playsinline></video>
+
+<div id="controls">
+    <label class="btn" for="file-img">📸 ADD PHOTO</label>
+    <input type="file" id="file-img" multiple accept="image/*">
+    <label class="btn" for="file-mp3">🎵 SET MUSIC</label>
+    <input type="file" id="file-mp3" accept="audio/*">
 </div>
 
 <audio id="player" loop crossorigin="anonymous"></audio>
 
 <script>
-/** 1. SUPABASE CONNECTION (Add your keys here) **/
-const SB_URL = "https://fghbnkjpuoqonnqrtxlm.supabase.co"; 
-const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZnaGJua2pwdW9xb25ucXJ0eGxtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY1OTc1ODgsImV4cCI6MjA4MjE3MzU4OH0.LkPfFC19GKdQcP2IaZyrymxhF2bNzCwcw-yrjMKqOIw";
-let db = null;
-if (SB_URL !== "https://fghbnkjpuoqonnqrtxlm.supabase.co") db = supabase.createClient(SB_URL, SB_KEY);
+// --- CONFIG ---
+const URL_SB = "https://fghbnkjpuoqonnqrtxlm.supabase.coL"; 
+const KEY_SB = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZnaGJua2pwdW9xb25ucXJ0eGxtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY1OTc1ODgsImV4cCI6MjA4MjE3MzU4OH0.LkPfFC19GKdQcP2IaZyrymxhF2bNzCwcw-yrjMKqOIw";
+const db = supabase.createClient(URL_SB, KEY_SB);
 
-/** 2. FANCY 3D SCENE (GLITTER TREE) **/
+// --- 3D SCENE ---
 const scene = new THREE.Scene();
-con
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// Glitter Tree
+const pts = 15000;
+const geo = new THREE.BufferGeometry();
+const pos = new Float32Array(pts * 3);
+const orig = new Float32Array(pts * 3);
+for(let i=0; i<pts; i++) {
+    const r = i/pts;
+    const a = i * 0.15;
+    const rad = (1-r) * 4.5;
+    pos[i*3] = orig[i*3] = Math.cos(a)*rad;
+    pos[i*3+1] = orig[i*3+1] = r*12 - 6;
+    pos[i*3+2] = orig[i*3+2] = Math.sin(a)*rad;
+}
+geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+const mat = new THREE.PointsMaterial({ size: 0.05, color: 0x00ff88, transparent: true, blending: THREE.AdditiveBlending });
+const tree = new THREE.Points(geo, mat);
+scene.add(tree);
+camera.position.z = 16;
+
+const frames = new THREE.Group();
+scene.add(frames);
+
+// --- LOGIC ---
+document.getElementById('btn-start').onclick = () => {
+    document.getElementById('start-screen').style.display = 'none';
+    cam.start().catch(e => alert("Camera blocked: " + e));
+    loadExisting();
+};
+
+async function upload(file, type) {
+    document.getElementById('msg').innerText = "Uploading...";
+    const name = `${Date.now()}_${file.name}`;
+    
+    // 1. Upload to Storage
+    const { data, error } = await db.storage.from('xmas').upload(name, file);
+    
+    if (error) {
+        alert("Upload Error: " + error.message + "\nCheck if your bucket is named 'xmas' and set to PUBLIC.");
+        document.getElementById('msg').innerText = "Error.";
+        return;
+    }
+
+    // 2. Save URL to Database
+    const { data: urlData } = db.storage.from('xmas').getPublicUrl(name);
+    const { error: dbErr } = await db.from('memories').insert([{ url: urlData.publicUrl, type: type }]);
+    
+    if (dbErr) alert("Database Error: " + dbErr.message);
+    else location.reload();
+}
+
+document.getElementById('file-img').onchange = (e) => Array.from(e.target.files).forEach(f => upload(f, 'image'));
+document.getElementById('file-mp3').onchange = (e) => upload(e.target.files[0], 'audio');
+
+async function loadExisting() {
+    const { data } = await db.from('memories').select('*');
+    if (data) data.forEach(item => {
+        if (item.type === 'image') addPhoto(item.url);
+        if (item.type === 'audio') { 
+            const p = document.getElementById('player');
+            p.src = item.url; 
+            p.play().catch(() => {});
+        }
+    });
+}
+
+function addPhoto(url) {
+    const tex = new THREE.TextureLoader().load(url);
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(3,3), new THREE.MeshBasicMaterial({map:tex, side:2}));
+    const a = Math.random()*Math.PI*2;
+    m.position.set(Math.cos(a)*10, (Math.random()-0.5)*10, Math.sin(a)*10);
+    m.lookAt(0,0,0);
+    frames.add(m);
+}
+
+// --- GESTURES ---
+let exploded = false;
+let lastX = 0;
+const hands = new Hands({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+hands.onResults(res => {
+    if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
+        const h = res.multiHandLandmarks[0];
+        const d = Math.hypot(h[8].x - h[0].x, h[8].y - h[0].y);
+        if (d < 0.2 && exploded) { exploded=false; morph(orig); }
+        if (d > 0.6 && !exploded) { exploded=true; morph(null); }
+        frames.rotation.y -= (h[0].x - lastX) * 5;
+        lastX = h[0].x;
+    }
+});
+const cam = new Camera(document.getElementById('v-preview'), { onFrame: async () => await hands.send({image: document.getElementById('v-preview')}) });
+
+function morph(target) {
+    const p = tree.geometry.attributes.position.array;
+    for (let i=0; i<pts; i++) {
+        gsap.to(p, {
+            [i*3]: target ? target[i*3] : (Math.random()-0.5)*50,
+            [i*3+1]: target ? target[i*3+1] : (Math.random()-0.5)*50,
+            [i*3+2]: target ? target[i*3+2] : (Math.random()-0.5)*50,
+            duration: 1.5, onUpdate: () => tree.geometry.attributes.position.needsUpdate = true
+        });
+    }
+}
+
+function animate() {
+    requestAnimationFrame(animate);
+    tree.rotation.y += 0.002;
+    renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
