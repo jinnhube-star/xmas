@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>The Eternal Magic Tree</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.11.0/gsap.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <style>
+        body { margin: 0; background: radial-gradient(circle at center, #001525 0%, #000 100%); overflow: hidden; font-family: 'Georgia', serif; }
+        #ui { position: absolute; top: 30px; left: 30px; color: gold; z-index: 10; pointer-events: none; }
+        #controls { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; gap: 10px; }
+        .glass-btn { background: rgba(255, 215, 0, 0.1); border: 1px solid gold; color: gold; padding: 12px 20px; border-radius: 5px; cursor: pointer; pointer-events: all; backdrop-filter: blur(10px); transition: 0.3s; }
+        .glass-btn:hover { background: rgba(255, 215, 0, 0.3); transform: translateY(-2px); }
+        #v-preview { position: absolute; top: 10px; right: 10px; width: 140px; border: 1px solid gold; border-radius: 10px; opacity: 0.7; }
+        input[type="file"] { display: none; }
+        #loader { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: black; display: flex; justify-content: center; align-items: center; color: gold; z-index: 1000; }
+    </style>
+</head>
+<body>
+
+<div id="loader">✨ Preparing the Magic...</div>
+
+<div id="ui">
+    <h1>🎄 The Eternal Memory Tree</h1>
+    <p id="status">Syncing with Cloud...</p>
+</div>
+
+<video id="v-preview" autoplay playsinline></video>
+
+<div id="controls">
+    <label class="glass-btn" for="photo-in">📸 Add Photo</label>
+    <input type="file" id="photo-in" multiple accept="image/*">
+    <label class="glass-btn" for="music-in">🎵 Set Music</label>
+    <input type="file" id="music-in" accept="audio/*">
+</div>
+
+<audio id="player" loop crossorigin="anonymous"></audio>
+
+<script>
+/** 1. SUPABASE CONFIG - PASTE YOUR KEYS HERE **/
+const SUB_URL = "https://fghbnkjpuoqonnqrtxlm.supabase.co "; 
+const SUB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZnaGJua2pwdW9xb25ucXJ0eGxtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY1OTc1ODgsImV4cCI6MjA4MjE3MzU4OH0.LkPfFC19GKdQcP2IaZyrymxhF2bNzCwcw-yrjMKqOIw";
+const supabase = supabase.createClient(SUB_URL, SUB_KEY);
+
+/** 2. FANCY TREE GRAPHICS **/
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// Multi-layered Particle Tree
+const pCount = 12000;
+const pGeo = new THREE.BufferGeometry();
+const pos = new Float32Array(pCount * 3);
+const colors = new Float32Array(pCount * 3);
+const orig = new Float32Array(pCount * 3);
+
+for (let i = 0; i < pCount; i++) {
+    const ratio = i / pCount;
+    // Layered branch logic
+    const spiral = i * 0.15;
+    const tier = Math.floor(ratio * 8); // 8 tiers of branches
+    const radius = (1 - ratio) * (4 + Math.sin(spiral * 2) * 0.5);
+    
+    const x = Math.cos(spiral) * radius;
+    const y = ratio * 12 - 6;
+    const z = Math.sin(spiral) * radius;
+
+    pos[i*3] = orig[i*3] = x;
+    pos[i*3+1] = orig[i*3+1] = y;
+    pos[i*3+2] = orig[i*3+2] = z;
+
+    // Glitter Colors: Deep Green, Bright Emerald, and Gold bits
+    const rand = Math.random();
+    if (rand > 0.96) { colors[i*3]=1; colors[i*3+1]=0.8; colors[i*3+2]=0.2; } // Gold Light
+    else if (rand > 0.90) { colors[i*3]=1; colors[i*3+1]=0.1; colors[i*3+2]=0.1; } // Red Ornament
+    else { colors[i*3]=0; colors[i*3+1]=rand*0.6+0.2; colors[i*3+2]=0.1; } // Green Branch
+}
+
+pGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+pGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+const pMat = new THREE.PointsMaterial({ size: 0.045, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending });
+const tree = new THREE.Points(pGeo, pMat);
+scene.add(tree);
+
+// Top Star Glow
+const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.6, 0), new THREE.MeshBasicMaterial({ color: 0xffcc00 }));
+star.position.y = 6.2;
+scene.add(star);
+
+camera.position.z = 16;
+
+/** 3. PERSISTENCE LOGIC (Sync with Supabase) **/
+const frameGroup = new THREE.Group();
+scene.add(frameGroup);
+
+async function syncCloud() {
+    const { data } = await supabase.from('memories').select('*');
+    if (data) {
+        data.forEach(item => {
+            if (item.type === 'image') createFrame(item.url);
+            if (item.type === 'audio') {
+                document.getElementById('player').src = item.url;
+                document.getElementById('player').play().catch(() => {});
+            }
+        });
+    }
+    document.getElementById('loader').style.display = 'none';
+}
+
+async function uploadFile(file, type) {
+    document.getElementById('status').innerText = "Uploading to Cloud...";
+    const name = Date.now() + "_" + file.name;
+    const { data, error } = await supabase.storage.from('xmas').upload(name, file);
+    
+    if (data) {
+        const { data: urlData } = supabase.storage.from('xmas').getPublicUrl(name);
+        const publicUrl = urlData.publicUrl;
+        // Save URL to database
+        await supabase.from('memories').insert([{ url: publicUrl, type: type }]);
+        if (type === 'image') createFrame(publicUrl);
+        else document.getElementById('player').src = publicUrl;
+        document.getElementById('status').innerText = "Saved Forever!";
+    }
+}
+
+function createFrame(url) {
+    const tex = new THREE.TextureLoader().load(url);
+    const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(2.5, 2.5),
+        new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide, transparent: true })
+    );
+    const angle = Math.random() * Math.PI * 2;
+    mesh.position.set(Math.cos(angle)*9, (Math.random()-0.5)*10, Math.sin(angle)*9);
+    mesh.lookAt(0,0,0);
+    frameGroup.add(mesh);
+}
+
+document.getElementById('photo-in').onchange = (e) => Array.from(e.target.files).forEach(f => uploadFile(f, 'image'));
+document.getElementById('music-in').onchange = (e) => uploadFile(e.target.files[0], 'audio');
+
+/** 4. AI GESTURES **/
+let isExploded = false;
+let lastX = 0;
+
+function onResults(results) {
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        const h = results.multiHandLandmarks[0];
+        const dist = Math.hypot(h[8].x - h[0].x, h[8].y - h[0].y);
+        
+        // Fist to build, Palm to explode
+        if (dist < 0.25 && isExploded) toggleTree(false);
+        else if (dist > 0.6 && !isExploded) toggleTree(true);
+
+        // Wave to spin photos
+        const dx = (h[0].x - lastX);
+        frameGroup.rotation.y -= dx * 8;
+        lastX = h[0].x;
+
+        // Pinch to Zoom
+        const pinch = Math.hypot(h[8].x - h[4].x, h[8].y - h[4].y);
+        if (pinch < 0.04) gsap.to(camera.position, {z: 8, duration: 1});
+        else gsap.to(camera.position, {z: 16, duration: 1});
+    }
+}
+
+function toggleTree(explode) {
+    isExploded = explode;
+    const p = tree.geometry.attributes.position.array;
+    for (let i = 0; i < pCount; i++) {
+        gsap.to(p, {
+            [i*3]: explode ? (Math.random()-0.5)*50 : orig[i*3],
+            [i*3+1]: explode ? (Math.random()-0.5)*50 : orig[i*3+1],
+            [i*3+2]: explode ? (Math.random()-0.5)*50 : orig[i*3+2],
+            duration: 2, ease: "power2.inOut",
+            onUpdate: () => tree.geometry.attributes.position.needsUpdate = true
+        });
+    }
+}
+
+const hands = new Hands({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+hands.setOptions({ maxNumHands: 1, modelComplexity: 1 });
+hands.onResults(onResults);
+new Camera(document.getElementById('v-preview'), {
+    onFrame: async () => { await hands.send({image: document.getElementById('v-preview')}); }
+}).start();
+
+function animate() {
+    requestAnimationFrame(animate);
+    tree.rotation.y += 0.003;
+    star.rotation.y += 0.05;
+    // Twinkle effect
+    pMat.opacity = 0.6 + Math.sin(Date.now()*0.002)*0.4;
+    renderer.render(scene, camera);
+}
+animate();
+syncCloud();
+</script>
+</body>
+</html>
