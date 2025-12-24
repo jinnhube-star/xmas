@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Holiday Tree - Custom Music & Photos</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.7.1/gsap.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #ui { position: absolute; top: 20px; left: 20px; color: white; z-index: 100; pointer-events: none; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); }
+        #controls { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; gap: 15px; }
+        .btn { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 12px 24px; border-radius: 30px; cursor: pointer; backdrop-filter: blur(10px); pointer-events: all; transition: 0.3s; font-weight: bold; }
+        .btn:hover { background: rgba(255,255,255,0.3); transform: scale(1.05); }
+        input[type="file"] { display: none; }
+        #webcam-box { position: absolute; top: 10px; right: 10px; width: 180px; height: 135px; border: 2px solid #00ff88; border-radius: 12px; overflow: hidden; box-shadow: 0 0 15px #00ff8855; }
+        video#input_video { transform: scaleX(-1); width: 100%; height: 100%; object-fit: cover; }
+        #status { font-size: 14px; color: #00ff88; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+<div id="ui">
+    <h1>🎄 Interactive Particle Tree</h1>
+    <p>Upload your memories & music to begin</p>
+    <div id="status">Waiting for Camera...</div>
+</div>
+
+<div id="webcam-box">
+    <video id="input_video"></video>
+</div>
+
+<div id="controls">
+    <label class="btn" for="photo-upload">📸 Upload Photos</label>
+    <input type="file" id="photo-upload" multiple accept="image/*">
+    
+    <label class="btn" for="music-upload">🎵 Upload Music</label>
+    <input type="file" id="music-upload" accept="audio/*">
+    
+    <button class="btn" id="play-btn">▶️ Play/Pause</button>
+</div>
+
+<audio id="audio-player" loop></audio>
+
+<script>
+/** 1. THREE.JS SCENE SETUP **/
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+// Particle Tree
+const pCount = 4000;
+const pGeo = new THREE.BufferGeometry();
+const pos = new Float32Array(pCount * 3);
+const destPos = new Float32Array(pCount * 3);
+
+for (let i = 0; i < pCount; i++) {
+    const ratio = i / pCount;
+    const angle = i * 0.2;
+    const radius = (1 - ratio) * 4.5;
+    const x = Math.cos(angle) * radius;
+    const y = ratio * 12 - 6;
+    const z = Math.sin(angle) * radius;
+
+    destPos[i*3] = x; destPos[i*3+1] = y; destPos[i*3+2] = z;
+    pos[i*3] = (Math.random()-0.5)*30; 
+    pos[i*3+1] = (Math.random()-0.5)*30; 
+    pos[i*3+2] = (Math.random()-0.5)*30;
+}
+
+pGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+const pMat = new THREE.PointsMaterial({ color: 0x00ffcc, size: 0.04, transparent: true, opacity: 0.8 });
+const tree = new THREE.Points(pGeo, pMat);
+scene.add(tree);
+
+camera.position.z = 15;
+
+/** 2. PHOTO & MUSIC UPLOAD LOGIC **/
+const frameGroup = new THREE.Group();
+scene.add(frameGroup);
+const photos = [];
+
+document.getElementById('photo-upload').addEventListener('change', (e) => {
+    for (let file of e.target.files) {
+        const url = URL.createObjectURL(file);
+        new THREE.TextureLoader().load(url, (tex) => {
+            const geo = new THREE.PlaneGeometry(2, 2);
+            const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide });
+            const mesh = new THREE.Mesh(geo, mat);
+            const angle = Math.random() * Math.PI * 2;
+            const dist = 7 + Math.random() * 3;
+            mesh.position.set(Math.cos(angle)*dist, (Math.random()-0.5)*10, Math.sin(angle)*dist);
+            mesh.lookAt(0, 0, 0);
+            frameGroup.add(mesh);
+            photos.push(mesh);
+        });
+    }
+});
+
+const audio = document.getElementById('audio-player');
+document.getElementById('music-upload').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if(file) {
+        audio.src = URL.createObjectURL(file);
+        audio.play();
+        document.getElementById('status').innerText = "Playing: " + file.name;
+    }
+});
+
+document.getElementById('play-btn').onclick = () => audio.paused ? audio.play() : audio.pause();
+
+/** 3. GESTURE RECOGNITION (MEDIAPIPE) **/
+let isExploded = true;
+let prevHandX = 0;
+
+function onResults(results) {
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        const landmarks = results.multiHandLandmarks[0];
+        document.getElementById('status').innerText = "Hand Detected";
+
+        // Logic for Fist (Recreate) vs Open (Explode)
+        const d8 = Math.hypot(landmarks[8].x - landmarks[0].x, landmarks[8].y - landmarks[0].y);
+        if (d8 < 0.25 && isExploded) toggleTree(false); // Fist detected
+        else if (d8 > 0.5 && !isExploded) toggleTree(true); // Open Palm detected
+
+        // Logic for Wave (Rotate)
+        const currentX = landmarks[0].x;
+        const deltaX = (currentX - prevHandX);
+        frameGroup.rotation.y -= deltaX * 4;
+        prevHandX = currentX;
+
+        // Logic for Pinch (Zoom Focus)
+        const dPinch = Math.hypot(landmarks[8].x - landmarks[4].x, landmarks[8].y - landmarks[4].y);
+        if (dPinch < 0.04) {
+            gsap.to(camera.position, { z: 8, duration: 1 });
+        } else {
+            gsap.to(camera.position, { z: 15, duration: 1 });
+        }
+    }
+}
+
+function toggleTree(explode) {
+    isExploded = explode;
+    const positions = tree.geometry.attributes.position.array;
+    for (let i = 0; i < pCount; i++) {
+        const targetX = explode ? (Math.random()-0.5)*30 : destPos[i*3];
+        const targetY = explode ? (Math.random()-0.5)*30 : destPos[i*3+1];
+        const targetZ = explode ? (Math.random()-0.5)*30 : destPos[i*3+2];
+        
+        gsap.to(positions, {
+            [i*3]: targetX, [i*3+1]: targetY, [i*3+2]: targetZ,
+            duration: 2, ease: "power2.inOut",
+            onUpdate: () => tree.geometry.attributes.position.needsUpdate = true
+        });
+    }
+}
+
+const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5 });
+hands.onResults(onResults);
+
+const cam = new Camera(document.getElementById('input_video'), {
+    onFrame: async () => { await hands.send({image: document.getElementById('input_video')}); },
+    width: 640, height: 480
+});
+cam.start();
+
+/** 4. MAIN ANIMATION LOOP **/
+function animate() {
+    requestAnimationFrame(animate);
+    tree.rotation.y += 0.002;
+    if (isExploded) frameGroup.rotation.y += 0.005;
+    renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
