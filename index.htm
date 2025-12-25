@@ -52,8 +52,8 @@
     
     <video id="v-preview" autoplay playsinline></video>
     <div id="nav-hint">
-        ← → Arrow Keys: Spotlight Memory<br>
-        Click Spotlight Photo: Resume Free Rotation
+        ← → Arrow Keys: Spotlight a Memory<br>
+        Mouse Drag: Rotate the Tree & Spiral Gallery
     </div>
 
     <div id="controls">
@@ -81,17 +81,21 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 document.body.appendChild(renderer.domElement);
 
-const treeGroup = new THREE.Group();
-const frameGroup = new THREE.Group();
-scene.add(treeGroup);
-scene.add(frameGroup);
+// We use two separate groups:
+// 1. WorldGroup: Rotates with the mouse (Tree + Spiral)
+// 2. SpotlightGroup: Stays fixed in the middle of the screen
+const worldGroup = new THREE.Group();
+const spiralGroup = new THREE.Group();
+const spotlightGroup = new THREE.Group();
+scene.add(worldGroup);
+scene.add(spotlightGroup);
+worldGroup.add(spiralGroup);
 
-// BUSHY TREE PARTICLES
+// TREE PARTICLES
 const pCount = 20000;
 const pGeo = new THREE.BufferGeometry();
 const posArr = new Float32Array(pCount * 3);
 const colorArr = new Float32Array(pCount * 3);
-
 for (let i = 0; i < pCount; i++) {
     const ratio = i / pCount;
     const spiral = i * 0.15;
@@ -106,9 +110,9 @@ for (let i = 0; i < pCount; i++) {
 }
 pGeo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
 pGeo.setAttribute('color', new THREE.BufferAttribute(colorArr, 3));
-treeGroup.add(new THREE.Points(pGeo, new THREE.PointsMaterial({ size: 0.06, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, opacity: 0.7 })));
+worldGroup.add(new THREE.Points(pGeo, new THREE.PointsMaterial({ size: 0.06, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, opacity: 0.7 })));
 
-// FESTIVE LIGHT BULBS
+// LIGHT BULBS
 const bulbColors = [0xff4444, 0xffdd44, 0x4444ff];
 for(let j=0; j<150; j++) {
     const r = Math.random();
@@ -116,20 +120,20 @@ for(let j=0; j<150; j++) {
     const color = bulbColors[Math.floor(Math.random()*3)];
     const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), new THREE.MeshStandardMaterial({ color: color, emissive: color, emissiveIntensity: 1.5 }));
     bulb.position.set(Math.cos(angle)*(1-r)*5.2, r*13.5 - 6.8, Math.sin(angle)*(1-r)*5.2);
-    treeGroup.add(bulb);
+    worldGroup.add(bulb);
 }
 
 const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.8, 0), new THREE.MeshBasicMaterial({ color: 0xfff000 }));
 star.position.y = 7.3;
-treeGroup.add(star);
+worldGroup.add(star);
 scene.add(new THREE.AmbientLight(0xffffff, 0.8));
 
 camera.position.set(0, 0, 26);
 
-/** 3. HELIX GALLERY & SPOTLIGHT **/
+/** 3. HELIX GALLERY & FIXED SPOTLIGHT LOGIC **/
 let memories = [];
 let currentIndex = -1;
-let isSpotlight = false;
+let spotlightedMesh = null;
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
@@ -137,55 +141,78 @@ async function loadMemories() {
     const { data } = await db.from('memories').select('*').order('created_at', { ascending: true });
     if (!data) return;
 
-    const total = data.filter(d => d.type === 'image').length;
+    const imgData = data.filter(d => d.type === 'image');
+    const total = imgData.length;
     const radius = 13.5;
-    const verticalSpread = 16; // Total height of the helix
+    const verticalSpread = 18; 
 
-    data.forEach((item, i) => {
-        if (item.type === 'image') {
-            const tex = new THREE.TextureLoader().load(item.url);
-            // Pictures start translucent (0.3)
-            const mat = new THREE.MeshBasicMaterial({ map: tex, side: 2, transparent: true, opacity: 0.3 });
-            const mesh = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 3.2), mat);
+    imgData.forEach((item, i) => {
+        const tex = new THREE.TextureLoader().load(item.url);
+        const mat = new THREE.MeshBasicMaterial({ map: tex, side: 2, transparent: true, opacity: 0.3 });
+        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(3.5, 3.5), mat);
 
-            // Helical Math: Spiral around the tree
-            const angle = (i / 7) * Math.PI * 2; // Every 7 pictures completes a circle
-            const yPos = (i / total) * verticalSpread - (verticalSpread/2);
+        // Helical Math to prevent overlap
+        const angle = (i / 8) * Math.PI * 2; 
+        const yPos = (i / total) * verticalSpread - (verticalSpread/2);
 
-            mesh.position.set(Math.cos(angle) * radius, yPos, Math.sin(angle) * radius);
-            mesh.lookAt(0, yPos, 0);
-            mesh.userData = { angle: angle, id: i };
-            
-            frameGroup.add(mesh);
-            memories.push(mesh);
-        } else {
-            const player = document.getElementById('player');
-            player.src = item.url;
-            player.play().catch(() => {});
-        }
+        // Set initial spiral position
+        mesh.position.set(Math.cos(angle) * radius, yPos, Math.sin(angle) * radius);
+        mesh.lookAt(0, yPos, 0);
+        
+        // Save helix coordinates for returning
+        mesh.userData = { 
+            helixPos: mesh.position.clone(), 
+            helixRot: mesh.rotation.clone(),
+            id: i 
+        };
+        
+        spiralGroup.add(mesh);
+        memories.push(mesh);
     });
-}
 
-function updateVisuals() {
-    memories.forEach((m, idx) => {
-        const isMain = isSpotlight && idx === currentIndex;
-        // Spotlighted photo is solid (1.0), others stay ghosted (0.2)
-        gsap.to(m.material, { opacity: isMain ? 1.0 : (isSpotlight ? 0.15 : 0.35), duration: 0.6 });
-        gsap.to(m.scale, { x: isMain ? 1.4 : 1.0, y: isMain ? 1.4 : 1.0, z: 1.0, duration: 0.6 });
-    });
+    const music = data.find(item => item.type === 'audio');
+    if (music) { document.getElementById('player').src = music.url; document.getElementById('player').play().catch(()=>{}); }
 }
 
 function setSpotlight(dir) {
-    isSpotlight = true;
+    // 1. If someone is already spotlighted, send them back to the spiral
+    if (spotlightedMesh) {
+        const oldMesh = spotlightedMesh;
+        oldMesh.material.opacity = 0.3;
+        // Re-attach to spiralGroup
+        spiralGroup.attach(oldMesh);
+        gsap.to(oldMesh.position, { x: oldMesh.userData.helixPos.x, y: oldMesh.userData.helixPos.y, z: oldMesh.userData.helixPos.z, duration: 1 });
+        gsap.to(oldMesh.rotation, { x: oldMesh.userData.helixRot.x, y: oldMesh.userData.helixRot.y, z: oldMesh.userData.helixRot.z, duration: 1 });
+        gsap.to(oldMesh.scale, { x: 1, y: 1, duration: 1 });
+    }
+
+    // 2. Update Index
     currentIndex = (currentIndex + dir + memories.length) % memories.length;
-    const targetAngle = -memories[currentIndex].userData.angle;
-    
-    // Rotate tree and gallery to face the spotlighted photo
-    gsap.to([frameGroup.rotation, treeGroup.rotation], { y: targetAngle, duration: 1.2, ease: "power3.out" });
-    updateVisuals();
+    const target = memories[currentIndex];
+    spotlightedMesh = target;
+
+    // 3. Bring target to fixed SpotlightGroup (middle of screen)
+    spotlightGroup.attach(target);
+    target.material.opacity = 1.0;
+
+    // Move to front and center (0,0,14 is inside the camera view)
+    gsap.to(target.position, { x: 0, y: 0, z: 14, duration: 1.2, ease: "power2.out" });
+    gsap.to(target.rotation, { x: 0, y: 0, z: 0, duration: 1.2 });
+    gsap.to(target.scale, { x: 1.6, y: 1.6, duration: 1.2 });
 }
 
-/** 4. MOUSE & KEYBOARD EVENT HANDLERS **/
+function clearSpotlight() {
+    if (!spotlightedMesh) return;
+    const m = spotlightedMesh;
+    m.material.opacity = 0.3;
+    spiralGroup.attach(m);
+    gsap.to(m.position, { x: m.userData.helixPos.x, y: m.userData.helixPos.y, z: m.userData.helixPos.z, duration: 1 });
+    gsap.to(m.rotation, { x: m.userData.helixRot.x, y: m.userData.helixRot.y, z: m.userData.helixRot.z, duration: 1 });
+    gsap.to(m.scale, { x: 1, y: 1, duration: 1 });
+    spotlightedMesh = null;
+}
+
+/** 4. INTERACTION **/
 window.addEventListener('keydown', (e) => {
     if (memories.length === 0) return;
     if (e.key === "ArrowRight") setSpotlight(1);
@@ -197,20 +224,21 @@ window.addEventListener('click', (e) => {
     mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
     raycaster.setFromCamera(mouse, camera);
     
-    const hits = raycaster.intersectObjects(memories);
-    if (hits.length > 0) {
-        const clicked = hits[0].object;
-        const clickedIndex = memories.indexOf(clicked);
-        
-        // If clicking the current spotlight photo, turn off spotlight
-        if (isSpotlight && clickedIndex === currentIndex) {
-            isSpotlight = false;
-            updateVisuals();
-        } else {
-            // Otherwise, spotlight the clicked photo
-            currentIndex = clickedIndex;
-            setSpotlight(0);
+    // Check if we clicked the spotlighted mesh
+    if (spotlightedMesh) {
+        const hits = raycaster.intersectObject(spotlightedMesh);
+        if (hits.length > 0) {
+            clearSpotlight();
+            return;
         }
+    }
+
+    // Otherwise check the spiral
+    const spiralHits = raycaster.intersectObjects(memories);
+    if (spiralHits.length > 0) {
+        const clicked = spiralHits[0].object;
+        currentIndex = memories.indexOf(clicked);
+        setSpotlight(0);
     }
 });
 
@@ -219,10 +247,8 @@ window.addEventListener('mousedown', () => isDragging = true);
 window.addEventListener('mouseup', () => isDragging = false);
 window.addEventListener('mousemove', (e) => {
     if (isDragging) {
-        const speed = 0.005;
-        frameGroup.rotation.y += e.movementX * speed;
-        treeGroup.rotation.y += e.movementX * speed;
-        if (isSpotlight) { isSpotlight = false; updateVisuals(); }
+        // Rotate the tree and the spiral gallery together
+        worldGroup.rotation.y += e.movementX * 0.005;
     }
 });
 
@@ -245,7 +271,7 @@ async function upload(file, type) {
 document.getElementById('file-img').onchange = (e) => Array.from(e.target.files).forEach(f => upload(f, 'image'));
 document.getElementById('file-mp3').onchange = (e) => upload(e.target.files[0], 'audio');
 
-/** 6. MAIN ENGINE LOOP **/
+/** 6. LOOP **/
 const hands = new Hands({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
 hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7 });
 hands.onResults(res => {
@@ -259,10 +285,9 @@ const cam = new Camera(document.getElementById('v-preview'), { onFrame: async ()
 
 function animate() {
     requestAnimationFrame(animate);
-    // Automatic rotation only when not interacting
-    if (!isDragging && !isSpotlight) {
-        treeGroup.rotation.y += 0.002;
-        frameGroup.rotation.y += 0.002;
+    // Idle rotation for tree and spiral (only when not dragging)
+    if (!isDragging) {
+        worldGroup.rotation.y += 0.0015;
     }
     star.rotation.y += 0.05;
     star.scale.setScalar(1 + Math.sin(Date.now()*0.005)*0.1);
