@@ -14,7 +14,6 @@
         body { margin: 0; background: #01080e; overflow: hidden; font-family: 'Montserrat', sans-serif; color: white; cursor: grab; }
         body:active { cursor: grabbing; }
         
-        /* UI Layers */
         #ui-layer { position: absolute; inset: 0; pointer-events: none; z-index: 10; border: 20px solid transparent; }
         #header { position: absolute; top: 20px; left: 20px; }
         h1 { font-family: 'Cinzel', serif; color: var(--gold); margin: 0; font-size: 2.5rem; text-shadow: 0 0 15px rgba(212, 175, 55, 0.5); }
@@ -52,7 +51,7 @@
     </div>
     
     <video id="v-preview" autoplay playsinline></video>
-    <div id="nav-hint">Drag to Rotate • Arrow Keys to Cycle Memories</div>
+    <div id="nav-hint">Arrows: Cycle Memories • Click Main Photo: Resume Rotation</div>
 
     <div id="controls">
         <label class="magic-btn" for="file-img">Add Memories</label>
@@ -65,12 +64,12 @@
 <audio id="player" loop crossorigin="anonymous"></audio>
 
 <script>
-/** 1. DATABASE CONFIG **/
+/** 1. CONFIG **/
 const URL_SB = "https://fghbnkjpuoqonnqrtxlm.supabase.co"; 
 const KEY_SB = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZnaGJua2pwdW9xb25ucXJ0eGxtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY1OTc1ODgsImV4cCI6MjA4MjE3MzU4OH0.LkPfFC19GKdQcP2IaZyrymxhF2bNzCwcw-yrjMKqOIw"; 
 const db = supabase.createClient(URL_SB, KEY_SB);
 
-/** 2. THREE.JS SCENE **/
+/** 2. SCENE **/
 const scene = new THREE.Scene();
 scene.fog = new THREE.FogExp2(0x01080e, 0.02);
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -84,7 +83,7 @@ const frameGroup = new THREE.Group();
 scene.add(treeGroup);
 scene.add(frameGroup);
 
-// BUSHY TREE PARTICLES
+// BUSHY TREE + BULBS
 const pCount = 20000;
 const pGeo = new THREE.BufferGeometry();
 const posArr = new Float32Array(pCount * 3);
@@ -104,143 +103,155 @@ for (let i = 0; i < pCount; i++) {
 }
 pGeo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
 pGeo.setAttribute('color', new THREE.BufferAttribute(colorArr, 3));
-const pMat = new THREE.PointsMaterial({ size: 0.05, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, opacity: 0.8 });
-treeGroup.add(new THREE.Points(pGeo, pMat));
+treeGroup.add(new THREE.Points(pGeo, new THREE.PointsMaterial({ size: 0.05, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, opacity: 0.8 })));
 
-// FESTIVE BULBS (Red, Yellow, Blue)
 const bulbColors = [0xff0000, 0xffff00, 0x0000ff];
-for(let j=0; j<100; j++) {
+for(let j=0; j<120; j++) {
     const r = Math.random();
     const angle = Math.random() * Math.PI * 2;
-    const radius = (1 - r) * 4.5;
     const color = bulbColors[Math.floor(Math.random()*3)];
-    const bulb = new THREE.Mesh(
-        new THREE.SphereGeometry(0.12, 8, 8),
-        new THREE.MeshStandardMaterial({ color: color, emissive: color, emissiveIntensity: 1 })
-    );
-    bulb.position.set(Math.cos(angle)*radius, r*13 - 6.5, Math.sin(angle)*radius);
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), new THREE.MeshStandardMaterial({ color: color, emissive: color, emissiveIntensity: 1 }));
+    bulb.position.set(Math.cos(angle)*(1-r)*5, r*13 - 6.5, Math.sin(angle)*(1-r)*5);
     treeGroup.add(bulb);
 }
 
 const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.8, 0), new THREE.MeshBasicMaterial({ color: 0xfff000 }));
 star.position.y = 7.2;
 treeGroup.add(star);
-scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 
-camera.position.z = 24;
+camera.position.z = 25;
 
-/** 3. UPLOAD LOGIC **/
+/** 3. HELICAL GALLERY LOGIC **/
+const memories = [];
+let currentIndex = -1;
+let isSpotlight = false;
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+async function loadMemories() {
+    const { data } = await db.from('memories').select('*').order('created_at', { ascending: true });
+    if (!data) return;
+
+    const radius = 14;
+    const total = data.filter(d => d.type === 'image').length;
+
+    data.forEach((item, i) => {
+        if (item.type === 'image') {
+            const tex = new THREE.TextureLoader().load(item.url);
+            const mat = new THREE.MeshBasicMaterial({ map: tex, side: 2, transparent: true, opacity: 0.5 });
+            const mesh = new THREE.Mesh(new THREE.PlaneGeometry(3.5, 3.5), mat);
+
+            // Helical math: Vertical spiral to maximize space
+            const angle = (i / 10) * Math.PI * 2; // Spiral every 10 images
+            const yPos = (i / total) * 15 - 7.5;
+
+            mesh.position.set(Math.cos(angle) * radius, yPos, Math.sin(angle) * radius);
+            mesh.lookAt(0, yPos, 0);
+            mesh.userData = { angle: angle, id: i };
+            
+            frameGroup.add(mesh);
+            memories.push(mesh);
+        } else {
+            const player = document.getElementById('player');
+            player.src = item.url;
+            player.play().catch(() => {});
+        }
+    });
+}
+
+/** 4. INTERACTION & SPOTLIGHT **/
+function updateVisuals() {
+    memories.forEach((m, idx) => {
+        const isActive = isSpotlight && idx === currentIndex;
+        gsap.to(m.material, { opacity: isActive ? 1.0 : (isSpotlight ? 0.2 : 0.5), duration: 0.5 });
+        gsap.to(m.scale, { x: isActive ? 1.3 : 1.0, y: isActive ? 1.3 : 1.0, duration: 0.5 });
+    });
+}
+
+function navigate(dir) {
+    isSpotlight = true;
+    currentIndex = (currentIndex + dir + memories.length) % memories.length;
+    const targetAngle = -memories[currentIndex].userData.angle;
+    
+    gsap.to([frameGroup.rotation, treeGroup.rotation], { y: targetAngle, duration: 1.2, ease: "expo.out" });
+    updateVisuals();
+}
+
+// Mouse Click Logic
+window.addEventListener('click', (e) => {
+    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+    
+    const intersects = raycaster.intersectObjects(memories);
+    if (intersects.length > 0) {
+        const clicked = intersects[0].object;
+        if (isSpotlight && clicked.userData.id === currentIndex) {
+            // Releasing the spotlight
+            isSpotlight = false;
+            updateVisuals();
+        } else {
+            // Jump to this picture
+            currentIndex = memories.indexOf(clicked);
+            navigate(0);
+        }
+    }
+});
+
+// Dragging
+let isDragging = false;
+window.addEventListener('mousedown', () => isDragging = true);
+window.addEventListener('mouseup', () => isDragging = false);
+window.addEventListener('mousemove', (e) => {
+    if (isDragging) {
+        frameGroup.rotation.y += e.movementX * 0.005;
+        treeGroup.rotation.y += e.movementX * 0.005;
+        if (isSpotlight) { isSpotlight = false; updateVisuals(); }
+    }
+});
+
+window.addEventListener('keydown', (e) => {
+    if (e.key === "ArrowRight") navigate(1);
+    if (e.key === "ArrowLeft") navigate(-1);
+});
+
+/** 5. UPLOADING **/
 async function upload(file, type) {
     document.getElementById('status-pill').innerText = "Uploading...";
     const name = `${Date.now()}_${file.name}`;
-    try {
-        const { data, error } = await db.storage.from('xmas').upload(name, file);
-        if (error) throw error;
+    const { data } = await db.storage.from('xmas').upload(name, file);
+    if (data) {
         const { data: urlData } = db.storage.from('xmas').getPublicUrl(name);
         await db.from('memories').insert([{ url: urlData.publicUrl, type: type }]);
-        document.getElementById('status-pill').innerText = "Success! Reloading...";
-        setTimeout(() => location.reload(), 1000);
-    } catch (err) {
-        console.error(err);
-        document.getElementById('status-pill').innerText = "Error uploading";
+        location.reload();
     }
 }
 
 document.getElementById('file-img').onchange = (e) => Array.from(e.target.files).forEach(f => upload(f, 'image'));
 document.getElementById('file-mp3').onchange = (e) => upload(e.target.files[0], 'audio');
 
-/** 4. NAVIGATION & GRID (NO OVERLAP) **/
-const memories = [];
-let currentMemoryIndex = 0;
-
-async function loadMemories() {
-    const { data } = await db.from('memories').select('*').order('created_at', { ascending: true });
-    if (!data) return;
-
-    const radius = 13;
-    const itemsPerRow = 8;
-    const rowHeight = 4.5;
-
-    data.filter(item => item.type === 'image').forEach((item, i) => {
-        const tex = new THREE.TextureLoader().load(item.url);
-        const mesh = new THREE.Mesh(
-            new THREE.PlaneGeometry(3.5, 3.5), 
-            new THREE.MeshBasicMaterial({ map: tex, side: 2, transparent: true })
-        );
-
-        const row = Math.floor(i / itemsPerRow);
-        const col = i % itemsPerRow;
-        const angle = (col / itemsPerRow) * Math.PI * 2;
-        const yPos = (row * -rowHeight) + 4;
-
-        mesh.position.set(Math.cos(angle) * radius, yPos, Math.sin(angle) * radius);
-        mesh.lookAt(0, yPos, 0);
-        mesh.userData.angle = angle; 
-        
-        frameGroup.add(mesh);
-        memories.push(mesh);
-    });
-
-    const music = data.find(item => item.type === 'audio');
-    if (music) {
-        const player = document.getElementById('player');
-        player.src = music.url;
-        player.play().catch(e => console.log("Audio waiting for interaction"));
-    }
-}
-
-/** 5. INTERACTION **/
-let isDragging = false;
-window.addEventListener('mousedown', () => isDragging = true);
-window.addEventListener('mouseup', () => isDragging = false);
-window.addEventListener('mousemove', (e) => {
-    if (isDragging) {
-        const sensitivity = 0.005;
-        frameGroup.rotation.y += e.movementX * sensitivity;
-        treeGroup.rotation.y += e.movementX * sensitivity;
-    }
-});
-
-window.addEventListener('keydown', (e) => {
-    if (memories.length === 0) return;
-    if (e.key === "ArrowRight") navigate(1);
-    if (e.key === "ArrowLeft") navigate(-1);
-});
-
-function navigate(dir) {
-    currentMemoryIndex = (currentMemoryIndex + dir + memories.length) % memories.length;
-    const targetAngle = -memories[currentMemoryIndex].userData.angle;
-    gsap.to([frameGroup.rotation, treeGroup.rotation], { y: targetAngle, duration: 1.2, ease: "power2.inOut" });
-    gsap.to(memories[currentMemoryIndex].scale, { x: 1.1, y: 1.1, duration: 0.3, yoyo: true, repeat: 1 });
-}
-
-/** 6. START & GESTURES **/
+/** 6. LOOP **/
 document.getElementById('start-btn').onclick = () => {
     document.getElementById('overlay').style.opacity = '0';
-    setTimeout(() => {
-        document.getElementById('overlay').style.display='none';
-        cam.start();
-        loadMemories();
-    }, 1000);
+    setTimeout(() => { document.getElementById('overlay').style.display='none'; cam.start(); loadMemories(); }, 1000);
 };
 
 const hands = new Hands({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
 hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7 });
 hands.onResults(res => {
     if (res.multiHandLandmarks && res.multiHandLandmarks[0]) {
-        const h = res.multiHandLandmarks[0];
-        const pinch = Math.hypot(h[8].x - h[4].x, h[8].y - h[4].y);
-        gsap.to(camera.position, { z: pinch < 0.05 ? 12 : 24, duration: 0.8 });
+        const pinch = Math.hypot(res.multiHandLandmarks[0][8].x - res.multiHandLandmarks[0][4].x, res.multiHandLandmarks[0][8].y - res.multiHandLandmarks[0][4].y);
+        gsap.to(camera.position, { z: pinch < 0.05 ? 12 : 25, duration: 0.8 });
     }
 });
-
 const cam = new Camera(document.getElementById('v-preview'), { onFrame: async () => await hands.send({image: document.getElementById('v-preview')}) });
 
 function animate() {
     requestAnimationFrame(animate);
-    if (!isDragging) {
-        treeGroup.rotation.y += 0.001;
-        frameGroup.rotation.y += 0.001;
+    if (!isDragging && !isSpotlight) {
+        treeGroup.rotation.y += 0.0015;
+        frameGroup.rotation.y += 0.0015;
     }
     star.rotation.y += 0.05;
     star.scale.setScalar(1 + Math.sin(Date.now()*0.005)*0.1);
